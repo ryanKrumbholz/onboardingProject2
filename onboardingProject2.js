@@ -65,7 +65,7 @@ async function listContainers(accountId){
     const params = {
         parent: `accounts/${accountId}`
     }
-     return (await backOff(() => containers.list(params))).data.container;
+     return (await backOff(() => containers.list(params), {numOfAttempts: 20})).data.container;
 }
 
 async function getContainerByPublicId(pid, accountId){
@@ -101,7 +101,7 @@ async function createContainer(accountId, newContainerName){
         parent: `accounts/${accountId}`,
         requestBody: body
     }
-    return await backOff(() => containers.create(params, body)); // Call to API to create container.
+    return await backOff(() => containers.create(params, body), {numOfAttempts: 20}); // Call to API to create container.
 }
 
 async function getContainerTags(accountId, containerId, workspaceId){
@@ -109,52 +109,55 @@ async function getContainerTags(accountId, containerId, workspaceId){
     const params = {    
         parent: `accounts/${accountId}/containers/${containerId}/workspaces/${workspaceId}`
     }
-    return (await backOff(() => containers.workspaces.tags.list(params))).data.tag;
+    return (await backOff(() => containers.workspaces.tags.list(params), {numOfAttempts: 20})).data.tag;
 }
 
 async function getContainerTriggers(accountId, containerId, workspaceId){
     const params = {    
         parent: `accounts/${accountId}/containers/${containerId}/workspaces/${workspaceId}`
     }
-    return (await backOff(() => containers.workspaces.triggers.list(params))).data.trigger;
+    return (await backOff(() => containers.workspaces.triggers.list(params), {numOfAttempts: 20})).data.trigger;
 }
 
 async function getContainerVariables(accountId, containerId, workspaceId){
     const params = {    
         parent: `accounts/${accountId}/containers/${containerId}/workspaces/${workspaceId}`
     }
-    return (await backOff(() => containers.workspaces.variables.list(params))).data.variable;
+    return (await backOff(() => containers.workspaces.variables.list(params), {numOfAttempts: 20})).data.variable;
 }
 
-async function cloneContainerTag(accountId, containerId, tag, workspaceId){
+async function cloneContainerTag(accountId, containerId, tag, workspaceId, map){
     delete tag.path;
     delete tag.accountId;
     delete tag.containerId;
     delete tag.workspaceId;
     delete tag.fingerprint;
     delete tag.tagManagerUrl;
-    delete tag.tagId;
+    
+    let firingTriggerIds = [];
+    tag.firingTriggerId.forEach(id => {
+        if(map.has(id)) {
+            firingTriggerIds.push(map.get(id));
+        }
+        else {
+            firingTriggerIds.push(id)
+        }
+    });
+    tag.firingTriggerId = firingTriggerIds;
+
     const params = {    
         parent: `accounts/${accountId}/containers/${containerId}/workspaces/${workspaceId}`,
         requestBody: tag
     }
-
-    try {
-        const response = await backOff(() => 
-        containers.workspaces.tags.create(params)
-        .then((val) => {
-            console.log('Tag created');
-        })
-        .catch((err) => {
-            throw(err)
-        })
-        );
-    }
-    catch (err){
-        console.log(err);
-    }
-
-    // console.log(tag.name, tag)
+        try {
+            const response = await backOff(() => containers.workspaces.tags.create(params), {numOfAttempts: 20});
+            console.log('Tag created: ', response.data.name)
+            return response;
+        }
+        catch (err){
+            console.log(err);
+        }
+    
 }
 
 async function cloneContainerTrigger(accountId, containerId, trigger, workspaceId){
@@ -168,22 +171,15 @@ async function cloneContainerTrigger(accountId, containerId, trigger, workspaceI
         parent: `accounts/${accountId}/containers/${containerId}/workspaces/${workspaceId}`,
         requestBody: trigger
     }
-    try {
-        const response = await backOff(() => 
-        containers.workspaces.triggers.create(params)
-        .then((val) => {
-            console.log('Trigger created');
-        })
-        .catch((err) => {
-            throw(err)
-        })
-        );
-    }
-    catch (err){
-        console.log(err);
-    }
+        try {
+            const response = await backOff(() => containers.workspaces.triggers.create(params), {numOfAttempts: 20});
+            console.log('Trigger created: ', response.data.name)
+            return response;
+        }
+        catch (err){
+            console.log(err);
+        }
 
-    // console.log(accountId, containerId, trigger, workspaceId)
 }
 
 async function cloneContainerVariable(accountId, containerId, variable, workspaceId){
@@ -198,43 +194,65 @@ async function cloneContainerVariable(accountId, containerId, variable, workspac
         requestBody: variable
     }
 
-    try {
-        const response = await backOff(() => 
-        containers.workspaces.variables.create(params)
-        .then((val) => {
-            console.log('Variable created');
-        })
-        .catch((err) => {
-            throw(err)
-        })
-        );
-    }
-    catch (err){
-        console.log(err);
-    }
-
-    // console.log(params)
+        try {
+            const response = await backOff(() => containers.workspaces.variables.create(params), {numOfAttempts: 20});
+            console.log('Variable created: ', response.data.name)
+            return response;
+        }
+        catch (err){
+            console.log(err);
+        }
 }
 
+
+
 async function cloneAllContainerTags(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId){
-    const tags = await getContainerTags(targetAccountId, targetContainerId, targetWorkspaceId);
-    tags.forEach(tag => {
-        cloneContainerTag(newAccountId, newContainerId, tag, newWorkspaceId);
-    });
+    const promise = new Promise(async (resolve, reject) => {
+        const tags = await getContainerTags(targetAccountId, targetContainerId, targetWorkspaceId);
+        let triggerIds = new Map();
+        let targetTriggerNames = new Map();
+        const existingTriggers = await getContainerTriggers(newAccountId, newContainerId, newWorkspaceId);
+        const targetTriggers = await getContainerTriggers(targetAccountId, targetContainerId, targetWorkspaceId);
+        if(targetTriggers) {
+            targetTriggers.forEach(trigger => {
+                targetTriggerNames.set(trigger.name, trigger.triggerId);
+            });
+        }
+        if(existingTriggers) {
+            existingTriggers.forEach(trigger => {
+                if(targetTriggerNames.has(trigger.name)){
+                    triggerIds.set(targetTriggerNames.get(trigger.name), trigger.triggerId);
+                }
+            });
+        }
+        tags.forEach(tag => {
+            cloneContainerTag(newAccountId, newContainerId, tag, newWorkspaceId, triggerIds);
+        });
+        resolve('resolved')
+    })
+   return promise;
 }
 
 async function cloneAllContainerTriggers(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId){
-    let triggers = await getContainerTriggers(targetAccountId, targetContainerId, targetWorkspaceId);
-    triggers.forEach(trigger => {
-        cloneContainerTrigger(newAccountId, newContainerId, trigger, newWorkspaceId);
-    });
+    const promise = new Promise(async (resolve, reject) => {
+        let triggers = await getContainerTriggers(targetAccountId, targetContainerId, targetWorkspaceId);
+        triggers.forEach(async trigger => {
+            const newTrigger = await cloneContainerTrigger(newAccountId, newContainerId, trigger, newWorkspaceId);
+        });
+        resolve('resolved')
+    })
+    return promise
 }
 
 async function cloneAllContainerVairables(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId){
-    const vairables = await getContainerVariables(targetAccountId, targetContainerId, targetWorkspaceId);
-    vairables.forEach(variable => {
-        cloneContainerVariable(newAccountId, newContainerId, variable, newWorkspaceId);
-    });
+    const promise = new Promise(async (resolve, reject) => {
+        const vairables = await getContainerVariables(targetAccountId, targetContainerId, targetWorkspaceId);
+        vairables.forEach(variable => {
+            cloneContainerVariable(newAccountId, newContainerId, variable, newWorkspaceId);
+        });
+        resolve('resolved');
+    })
+    return promise
 }
 
 async function cloneContainerEntities(targetContainer, newContainer){
@@ -258,16 +276,25 @@ async function cloneContainerEntities(targetContainer, newContainer){
     let newWorkspaceId;
 
     try{
-        targetWorkspaceId = await backOff(() => getWorkspaceId(targetAccountId, targetContainerId));
-        newWorkspaceId = await backOff(() => getWorkspaceId(newAccountId, newContainerId));
+        targetWorkspaceId = await backOff(() => getWorkspaceId(targetAccountId, targetContainerId), {numOfAttempts: 20});
+        newWorkspaceId = await backOff(() => getWorkspaceId(newAccountId, newContainerId), {numOfAttempts: 20});
         
     }  catch(error) {
         console.log(error)
     }
-
-    cloneAllContainerVairables(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId);
-    cloneAllContainerTriggers(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId);
-    cloneAllContainerTags(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId);
+    
+    cloneAllContainerVairables(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId)
+    .then(() => {
+        console.log("Completed cloning of variables.")
+        cloneAllContainerTriggers(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId)
+        .then(() => {
+            console.log("Completed cloning of triggers.")
+            cloneAllContainerTags(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId)
+            .then(() => {
+                console.log("Completed cloning of tags.")
+            });
+        });
+    });
 }
 
 async function getWorkspaceId(accountId, containerId){
