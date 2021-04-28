@@ -225,34 +225,37 @@ async function cloneAllContainerTags(targetAccountId, targetContainerId, newAcco
                 }
             });
         }
-        tags.forEach(tag => {
-            cloneContainerTag(newAccountId, newContainerId, tag, newWorkspaceId, triggerIds);
-        });
+        for (const tag of tags){
+            await cloneContainerTag(newAccountId, newContainerId, tag, newWorkspaceId, triggerIds);
+        };
+        console.log('Completed tag cloning.')
         resolve('resolved')
     })
-   return promise;
+    return promise;
 }
 
 async function cloneAllContainerTriggers(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId){
     const promise = new Promise(async (resolve, reject) => {
         let triggers = await getContainerTriggers(targetAccountId, targetContainerId, targetWorkspaceId);
-        triggers.forEach(async trigger => {
-            const newTrigger = await cloneContainerTrigger(newAccountId, newContainerId, trigger, newWorkspaceId);
-        });
+        for (const trigger of triggers){
+            await cloneContainerTrigger(newAccountId, newContainerId, trigger, newWorkspaceId);
+        };
+        console.log('Completed trigger cloning.')
         resolve('resolved')
     })
-    return promise
+    return promise;
 }
 
 async function cloneAllContainerVairables(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId){
     const promise = new Promise(async (resolve, reject) => {
-        const vairables = await getContainerVariables(targetAccountId, targetContainerId, targetWorkspaceId);
-        vairables.forEach(variable => {
-            cloneContainerVariable(newAccountId, newContainerId, variable, newWorkspaceId);
-        });
+        const variables = await getContainerVariables(targetAccountId, targetContainerId, targetWorkspaceId);
+        for (const variable of variables){
+            await cloneContainerVariable(newAccountId, newContainerId, variable, newWorkspaceId);
+        };
+        console.log('Completed variable cloning.')
         resolve('resolved');
     })
-    return promise
+    return promise;
 }
 
 async function cloneContainerEntities(targetContainer, newContainer){
@@ -283,18 +286,11 @@ async function cloneContainerEntities(targetContainer, newContainer){
         console.log(error)
     }
     
-    cloneAllContainerVairables(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId)
-    .then(() => {
-        console.log("Completed cloning of variables.")
-        cloneAllContainerTriggers(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId)
-        .then(() => {
-            console.log("Completed cloning of triggers.")
-            cloneAllContainerTags(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId)
-            .then(() => {
-                console.log("Completed cloning of tags.")
-            });
-        });
-    });
+    await cloneAllContainerVairables(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId);
+    await cloneAllContainerTriggers(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId);
+    await cloneAllContainerTags(targetAccountId, targetContainerId, newAccountId, newContainerId, targetWorkspaceId, newWorkspaceId);
+    console.log('Container cloning completed.');
+    
 }
 
 async function getWorkspaceId(accountId, containerId){
